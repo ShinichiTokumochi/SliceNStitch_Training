@@ -33,8 +33,9 @@ class Tensor:
                     if m == n:
                         continue
                     U = linalg.khatri_rao(U, self.A[n])
-                    H *= np.dot(self.A[n].T, self.A[n])
+                    H *= self.AtA[n]
                 self.A[m] = np.dot(np.dot(tl.unfold(self.X, m), U), np.linalg.pinv(H))
+                self.AtA[m] = np.dot(self.A[m].T, self.A[m])
 
             newfit = self.fitness()
             if i > 0 and abs(oldfit - newfit) < ALS_FIT_CHANGE_TOL:
@@ -44,6 +45,7 @@ class Tensor:
     def rand_init_A(self):
         rng = np.random.default_rng()
         self.A = [rng.random((dimension, self.rank)) for dimension in self.dimensions]
+        self.AtA = [np.dot(factor.T, factor) for factor in self.A]
 
     def rmse(self):
         reconst_X = self.reconst()
