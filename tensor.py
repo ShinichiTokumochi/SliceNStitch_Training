@@ -25,7 +25,6 @@ class Tensor:
         #self.Ax = tl.decomposition.parafac(self.X, rank=self.rank)
         oldfit = 0.
         for i in range(ALS_MAX_ITERS):
-            updated_A = []
             for m in range(len(self.dimensions)):
                 U = np.ones(self.rank).reshape(1, self.rank)
                 H = np.ones(self.rank**2).reshape(self.rank, self.rank)
@@ -62,10 +61,17 @@ class Tensor:
             U = linalg.khatri_rao(U, factor)
         
         return U.sum(axis=1).reshape(self.dimensions)
+    
+
+class Tensor_SNS_MAT(Tensor):
+
+    def update(self, dX):
+        self.X += dX
+        self.ALS()
 
 
 class TensorStream:
-    def __init__(self, events: list[list[tuple[list[int], float]]], dimensions: list[int], T: int, rank: int, start_time: int):
+    def __init__(self, events: list[list[tuple[list[int], float]]], dimensions: list[int], T: int, rank: int, start_time: int, algo: str):
         self.events = events
         self.T = T
         self.W = dimensions[-1]
@@ -81,7 +87,14 @@ class TensorStream:
                     ele = ele[index]
                 ele[time // T] = np.float64(value)
 
-        self.tensor = Tensor(dimensions, X, rank)
+        if algo == "ALS":
+            self.tensor = Tensor(dimensions, X, rank)
+        elif algo == "SNS_MAT":
+            self.tensor = Tensor_SNS_MAT(dimensions, X, rank)
+        else:
+            print("¯\_(ツ)_/¯")
+            exit(1)
+    
     
     def updateCurrent(self):
         self.current_time += 1
