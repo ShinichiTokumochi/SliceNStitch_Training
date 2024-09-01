@@ -1,31 +1,31 @@
 import pandas as pd
+from sklearn import preprocessing
 
 from tensor import TensorStream
 
 
-T = 20
-W = 10
+T = 1
+W = 30
 rank = 5
 start_time = 0
 epoch = 200
 ALGORITHM = "SNS_MAT"
+category_labels = ["ecommerce", "region"]
+time_label = "time"
+value_label = "value"
 
 
-data = pd.read_csv("ecommerce_region_W.csv")
+events = pd.read_csv("ecommerce_region_W.csv")
+events[time_label] = pd.to_datetime(events[time_label])
+events = events.sort_values(time_label)
+
+oe = preprocessing.OrdinalEncoder()
+events[category_labels + [time_label]] = oe.fit_transform(events[category_labels + [time_label]]).astype(int)
 
 # counts at non-temporal each mode + W
-dimensions = [data.iloc[:, i].nunique() for i in range(data.shape[1] - 2)] + [W]
+dimensions = [W] + (events[category_labels].max().values + 1).tolist()
 
-uniques = [list(data.iloc[:, i].unique()) for i in range(data.shape[1] - 2)]
-
-# grouped by time
-data['time'] = pd.to_datetime(data['time'])
-events = [[([uniques[i].index(row[i + 1]) for i in range(data.shape[1] - 2)], row[data.shape[1]])
-           for row in event.itertuples()]
-           for _, event in data.groupby(by='time', sort=True)]
-
-
-ts = TensorStream(events, dimensions, T, rank, start_time, ALGORITHM)
+ts = TensorStream(dimensions, T, rank, start_time, ALGORITHM, events, category_labels, time_label, value_label)
 
 for e in range(epoch):
     ts.updateCurrent()
