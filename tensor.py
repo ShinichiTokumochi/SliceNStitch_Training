@@ -47,14 +47,14 @@ class Tensor:
                     H *= self.AtA[n]
 
                 XU = np.ones(self.dimensions[m] * self.rank).reshape(self.dimensions[m], self.rank)
-                for x in self.non_zero_X.itertuples():
-                    xu = np.full(self.rank, x[-1])
+                for x, v in zip(self.non_zero_X.iloc[:, 0:-1].values, self.non_zero_X.iloc[:, -1]):
+                    xu = np.full(self.rank, v)
                     for n in range(len(self.dimensions)):
                         if m == n:
                             continue
-                        xu *= self.A[n][x[n + 1]]
-                    XU[x[m + 1]] += xu
-
+                        xu *= self.A[n][x[n]]
+                    XU[x[m]] += xu
+                    
                 self.A[m] = np.dot(XU, np.linalg.pinv(H))
                 self.AtA[m] = np.dot(self.A[m].T, self.A[m])
 
@@ -103,6 +103,7 @@ class TensorStream:
                  events: pd.DataFrame, category_labels: list[str], time_label: str, value_label: str = None):
         
         events = events.reindex(columns = [time_label] + category_labels + [value_label])
+        events = events[events[value_label] != 0.0]
 
         self.T = T
         self.W = dimensions[0]
