@@ -12,6 +12,36 @@ ALS_FIT_CHANGE_TOL = 1e-4
 TENSOR_MACHINE_EPSILON = 1e-5
 
 
+@jit(cache=True, nopython=True)
+def ALS_U(dimensions, rank, m, coords, data, A):
+    U = np.ones(dimensions[m] * rank).reshape(dimensions[m], rank)
+    for x, v in zip(coords, data):
+        xu = np.full(rank, v)
+        for n, xn in enumerate(x):
+            if m == n:
+                continue
+            xu *= A[n][xn]
+        U[x[m]] += xu
+    return U
+
+@jit(cache=True, nopython=True)
+def norm_frobenius_X(data):
+    nf_X = 0.
+    for v in data:
+        nf_X += np.square(v)
+    return np.sqrt(nf_X)
+
+@jit(cache=True, nopython=True)
+def innerprod_X_x_reconst(coords, data, A, _lambda):
+    innerprod = 0.
+    for x, v in zip(coords, data):
+        val_reconst = np.copy(_lambda)
+        for n, xn in enumerate(x):
+            val_reconst *= A[n][xn]
+        innerprod += v * val_reconst.sum()
+    return innerprod
+
+
 class Tensor:
     def __init__(self, dimensions: list[int], non_zero_X: COO, rank: int, non_negative: bool = True):
         self.dimensions = dimensions
@@ -29,18 +59,6 @@ class Tensor:
         self.ALS()
 
     def ALS(self):
-        @jit(cache=True, nopython=True)
-        def ALS_U(dimensions, rank, m, coords, data, A):
-            U = np.ones(dimensions[m] * rank).reshape(dimensions[m], rank)
-            for x, v in zip(coords, data):
-                xu = np.full(rank, v)
-                for n, xn in enumerate(x):
-                    if m == n:
-                        continue
-                    xu *= A[n][xn]
-                U[x[m]] += xu
-            return U
-        
         oldfit = 0.
         for i in range(ALS_MAX_ITERS):
             for m in range(self.mode_num):
@@ -69,6 +87,33 @@ class Tensor:
                 break
             oldfit = newfit
 
+    def SelectiveALS(self):
+        for m in range(self.mode_num):
+            non_zero_indicies = np.unique(self.non_zero_X.coords[m])
+            AtAprev = np.dot(self.A[m][non_zero_indicies].T, self.A[m][non_zero_indicies])
+
+            H = np.ones(self.rank**2).reshape(self.rank, self.rank)
+            for n in range(self.mode_num):
+                if m == n:
+                    continue
+                H *= self.AtA[n]
+            U = ALS_U(self.dimensions, self.rank, m, self.non_zero_X.coords.T, self.non_zero_X.data, self.A)
+
+            if self.non_negative:
+                self.A[m][non_zero_indicies] *= np.clip(U[non_zero_indicies], a_min=10e-12, a_max=None) / np.clip(np.dot(self.A[m][non_zero_indicies], H), a_min=10e-12, a_max=None)
+            else:
+                #self.A[m] = np.linalg.solve(H.T, U.T).T
+                H += np.diag(np.full(self.rank, 1e-10))
+                self.A[m][non_zero_indicies] = np.dot(U[non_zero_indicies], np.linalg.pinv(H))
+            
+            self._lambda = self.A[m].max(axis=0)
+            for r in range(self.rank):
+                if abs(self._lambda[r]) < TENSOR_MACHINE_EPSILON: self._lambda[r] = 1.0
+                else: self.A[m][:, r] /= self._lambda[r]
+            self.AtA[m] += np.dot(self.A[m][non_zero_indicies].T, self.A[m][non_zero_indicies]) - AtAprev
+
+
+
     def rand_init_A(self):
         rng = np.random.default_rng()
         self.A = [rng.random((dimension, self.rank)) for dimension in self.dimensions]
@@ -76,9 +121,9 @@ class Tensor:
         self._lambda = np.ones(self.rank)
 
     def rmse(self):
-        norm_X = self.norm_frobenius_X()
+        norm_X = norm_frobenius_X(self.non_zero_X.data)
         norm_reconst = self.norm_frobenius_reconst()
-        innerprod = self.innerprod_X_x_reconst()
+        innerprod = innerprod_X_x_reconst(self.non_zero_X.coords.T, self.non_zero_X.data, self.A, self._lambda)
 
         error_square = np.square(norm_X) + np.square(norm_reconst) - 2. * innerprod
         for d in self.dimensions:
@@ -86,32 +131,11 @@ class Tensor:
         return np.sqrt(error_square)
 
     def fitness(self):
-        norm_X = self.norm_frobenius_X()
+        norm_X = norm_frobenius_X(self.non_zero_X.data)
         norm_reconst = self.norm_frobenius_reconst()
-        innerprod = self.innerprod_X_x_reconst()
+        innerprod = innerprod_X_x_reconst(self.non_zero_X.coords.T, self.non_zero_X.data, self.A, self._lambda)
 
         return 1.- np.sqrt(abs(np.square(norm_X) + np.square(norm_reconst) - 2. * innerprod)) / norm_X
-    
-    def norm_frobenius_X(self):
-        @jit(cache=True, nopython=True)
-        def nf_X(data):
-            nf_X = 0.
-            for v in data:
-                nf_X += np.square(v)
-            return np.sqrt(nf_X)
-        return nf_X(self.non_zero_X.data)
-
-    def innerprod_X_x_reconst(self):
-        @jit(cache=True, nopython=True)
-        def innerprod(coords, data, A, _lambda):
-            innerprod = 0.
-            for x, v in zip(coords, data):
-                val_reconst = np.copy(_lambda)
-                for n, xn in enumerate(x):
-                    val_reconst *= A[n][xn]
-                innerprod += v * val_reconst.sum()
-            return innerprod
-        return innerprod(self.non_zero_X.coords.T, self.non_zero_X.data, self.A, self._lambda)
     
     def norm_frobenius_reconst(self):
         nf_reconst = np.dot(self._lambda.reshape(self.rank, 1), self._lambda.reshape(1, self.rank))
@@ -127,7 +151,9 @@ class Tensor_SNS_MAT(Tensor):
 
 
 class Tensor_SNS_VEC(Tensor):
-    pass
+    def update(self, non_zero_dX: COO):
+        self.non_zero_X += non_zero_dX
+        self.SelectiveALS()
 
 
 class TensorStream:
@@ -164,6 +190,8 @@ class TensorStream:
             self.tensor = Tensor(dimensions, non_zero_X, rank)
         elif algo == "SNS_MAT":
             self.tensor = Tensor_SNS_MAT(dimensions, non_zero_X, rank)
+        elif algo == "SNS_VEC":
+            self.tensor = Tensor_SNS_VEC(dimensions, non_zero_X, rank)
         else:
             print("¯\_(ツ)_/¯")
             exit(1)
