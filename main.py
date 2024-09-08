@@ -8,9 +8,9 @@ from tensor import TensorStream
 file_name = "ecommerce_region_W.csv"
 td = timedelta(days=7)
 T = 1
-W = 30
-rank = 5
-start_time = 0
+W = 104
+rank = 9
+start_time = 200
 epoch = 200
 ALGORITHM = "SNS_MAT"
 category_labels = ["ecommerce", "region"]
@@ -21,7 +21,7 @@ file_name = "kz.csv"
 td = timedelta(seconds=1)
 T = 60 * 60 * 24 * 30
 W = 10
-rank = 4
+rank = 10
 start_time = 0
 epoch = 200
 ALGORITHM = "SNS_MAT"

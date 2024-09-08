@@ -1,13 +1,10 @@
 import numpy as np
-import scipy.linalg
 import tensorly as tl
-from scipy import linalg
 import pandas as pd
-from itertools import product
 from sparse import COO
 from numba import jit
 from typing import Optional
-import scipy
+from sklearn.preprocessing import minmax_scale
 
 
 ALS_MAX_ITERS = 100
@@ -16,11 +13,12 @@ TENSOR_MACHINE_EPSILON = 1e-5
 
 
 class Tensor:
-    def __init__(self, dimensions: list[int], non_zero_X: COO, rank: int):
+    def __init__(self, dimensions: list[int], non_zero_X: COO, rank: int, non_negative: bool = True):
         self.dimensions = dimensions
+        self.mode_num = len(dimensions)
         self.rank = rank
-
         self.non_zero_X = non_zero_X
+        self.non_negative = non_negative
 
         self.rand_init_A()
         self.ALS()
@@ -45,21 +43,25 @@ class Tensor:
         
         oldfit = 0.
         for i in range(ALS_MAX_ITERS):
-            for m in range(len(self.dimensions)):
+            for m in range(self.mode_num):
                 H = np.ones(self.rank**2).reshape(self.rank, self.rank)
-                for n in range(len(self.dimensions)):
+                for n in range(self.mode_num):
                     if m == n:
                         continue
                     H *= self.AtA[n]
-                H += np.diag(np.full(self.rank, 1e-10))
                 U = ALS_U(self.dimensions, self.rank, m, self.non_zero_X.coords.T, self.non_zero_X.data, self.A)
+
+                if self.non_negative:
+                    self.A[m] *= np.clip(U, a_min=10e-12, a_max=None) / np.clip(np.dot(self.A[m], H), a_min=10e-12, a_max=None)
+                else:
+                    #self.A[m] = np.linalg.solve(H.T, U.T).T
+                    H += np.diag(np.full(self.rank, 1e-10))
+                    self.A[m] = np.dot(U, np.linalg.pinv(H))
                 
-                #self.A[m] = np.linalg.solve(H.T, U.T).T
-                self.A[m] = np.dot(U, np.linalg.pinv(H))
                 self._lambda = self.A[m].max(axis=0)
                 for r in range(self.rank):
                     if abs(self._lambda[r]) < TENSOR_MACHINE_EPSILON: self._lambda[r] = 1.0
-                    self.A[m][:, r] /= self._lambda[r]
+                    else: self.A[m][:, r] /= self._lambda[r]
                 self.AtA[m] = np.dot(self.A[m].T, self.A[m])
 
             newfit = self.fitness()
@@ -113,7 +115,7 @@ class Tensor:
     
     def norm_frobenius_reconst(self):
         nf_reconst = np.dot(self._lambda.reshape(self.rank, 1), self._lambda.reshape(1, self.rank))
-        for m in range(len(self.dimensions)):
+        for m in range(self.mode_num):
             nf_reconst *= self.AtA[m]
         return np.sqrt(abs(nf_reconst.sum()))
     
@@ -137,6 +139,7 @@ class TensorStream:
         else:
             events = events.reindex(columns = [time_label] + category_labels + [value_label])
             events = events[events[value_label] != 0.0]
+            events[value_label] = minmax_scale(events[value_label].to_numpy())
 
         self.T = T
         self.W = dimensions[0]
@@ -155,7 +158,7 @@ class TensorStream:
                              data = np.ones(len(start_events)), shape = dimensions)
         else:
             non_zero_X = COO(coords = start_events[[time_label] + category_labels].to_numpy().T,
-                             data = start_events[value_label].to_numpy().ravel(), shape = dimensions)
+                             data = start_events[value_label], shape = dimensions)
 
         if algo == "ALS":
             self.tensor = Tensor(dimensions, non_zero_X, rank)
