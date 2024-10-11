@@ -14,7 +14,7 @@ TENSOR_MACHINE_EPSILON = 1e-5
 
 @jit(cache=True, nopython=True)
 def ALS_U(dimensions, rank, m, coords, data, A):
-    U = np.ones(dimensions[m] * rank).reshape(dimensions[m], rank)
+    U = np.zeros((dimensions[m], rank))
     for x, v in zip(coords, data):
         xu = np.full(rank, v)
         for n, xn in enumerate(x):
@@ -87,32 +87,36 @@ class Tensor:
                 break
             oldfit = newfit
 
-    def SelectiveALS(self):
+    def SelectiveALS(self, non_zero_dX: COO):
         for m in range(self.mode_num):
-            non_zero_indicies = np.unique(self.non_zero_X.coords[m])
-            AtAprev = np.dot(self.A[m][non_zero_indicies].T, self.A[m][non_zero_indicies])
+            non_zero_indicies = np.unique(non_zero_dX.coords[0] if m == 0 else self.non_zero_X.coords[m])
 
             H = np.ones(self.rank**2).reshape(self.rank, self.rank)
             for n in range(self.mode_num):
                 if m == n:
                     continue
                 H *= self.AtA[n]
-            U = ALS_U(self.dimensions, self.rank, m, self.non_zero_X.coords.T, self.non_zero_X.data, self.A)
+            if m == 0:
+                U = ALS_U(self.dimensions, self.rank, m, non_zero_dX.coords.T, non_zero_dX.data, self.A)
+            else:
+                U = ALS_U(self.dimensions, self.rank, m, self.non_zero_X.coords.T, self.non_zero_X.data, self.A)
 
             if self.non_negative:
-                self.A[m][non_zero_indicies] *= np.clip(U[non_zero_indicies], a_min=10e-12, a_max=None) / np.clip(np.dot(self.A[m][non_zero_indicies], H), a_min=10e-12, a_max=None)
+                Am_new = self.A[m][non_zero_indicies] * np.clip(U[non_zero_indicies], a_min=10e-12, a_max=None) / np.clip(np.dot(self.A[m][non_zero_indicies], H), a_min=10e-12, a_max=None)
             else:
                 #self.A[m] = np.linalg.solve(H.T, U.T).T
                 H += np.diag(np.full(self.rank, 1e-10))
-                self.A[m][non_zero_indicies] = np.dot(U[non_zero_indicies], np.linalg.pinv(H))
+                Am_new = np.dot(U[non_zero_indicies], np.linalg.pinv(H))
+
+            if m == 0:
+                Am_new += self.A[m][non_zero_indicies]
+            self.A[m][non_zero_indicies] = Am_new
             
             self._lambda = self.A[m].max(axis=0)
             for r in range(self.rank):
                 if abs(self._lambda[r]) < TENSOR_MACHINE_EPSILON: self._lambda[r] = 1.0
                 else: self.A[m][:, r] /= self._lambda[r]
-            self.AtA[m] += np.dot(self.A[m][non_zero_indicies].T, self.A[m][non_zero_indicies]) - AtAprev
-
-
+            self.AtA[m] = np.dot(self.A[m].T, self.A[m])
 
     def rand_init_A(self):
         rng = np.random.default_rng()
@@ -153,7 +157,7 @@ class Tensor_SNS_MAT(Tensor):
 class Tensor_SNS_VEC(Tensor):
     def update(self, non_zero_dX: COO):
         self.non_zero_X += non_zero_dX
-        self.SelectiveALS()
+        self.SelectiveALS(non_zero_dX)
 
 
 class TensorStream:

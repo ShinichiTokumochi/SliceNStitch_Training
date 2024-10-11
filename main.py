@@ -17,16 +17,16 @@ category_labels = ["ecommerce", "region"]
 time_label = "time"
 value_label = "value"
 '''
-file_name = "kz.csv"
+file_name = "credit_card_transactions.csv"
 td = timedelta(seconds=1)
-T = 60 * 60 * 24 * 30
-W = 10
-rank = 10
+T = 60 * 60 * 24
+W = 28 * 8
+rank = 5
 start_time = 0
 epoch = 200
 ALGORITHM = "SNS_VEC"
-category_labels = ["category_code", "brand"]
-time_label = "event_time"
+category_labels = ["category", "state"]
+time_label = "datetime"
 value_label = None
 #'''
 
